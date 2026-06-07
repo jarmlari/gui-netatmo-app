@@ -187,7 +187,7 @@ class Stations:
                             f.write(f"{y}\n")
                             f.write(f"{self.shapefile_path}")
                         return ('The execution ran into an unexpected exception,'
-                                'stopping the download.')
+                                ' stopping the download.')
 
                 except Exception as e:
                     print("Unexpected exception caught: ", e)
@@ -203,7 +203,7 @@ class Stations:
                         f.write(f"{y}\n")
                         f.write(f"{self.shapefile_path}")
                     return ('The execution ran into an unexpected exception,'
-                            'stopping the download.')
+                            ' stopping the download.')
 
                 ### Acquiring the names and places of all stations available in the domain
                 stations = output.response["body"]

@@ -215,10 +215,15 @@ class MyGUI:
         if self.previous_info_frame is not None:
             self.clear_frame(self.previous_info_frame)
         self.clear_frame(self.status_frame)
-        ttk.Label(self.status_frame, text="Downloading in progress...").pack()
-        thread = threading.Thread(target=lambda: self.stations_start_fetch(),
-                                  daemon=True)
-        thread.start()
+        # Allow only one press of start. If already downloading dont do anything.
+        if self.stations.is_currently_executing():
+            print("Not accepting start if we are already downloading.")
+            ttk.Label(self.status_frame, text="Downloading already in progress.").pack()
+        else:
+            ttk.Label(self.status_frame, text="Downloading in progress...").pack()
+            thread = threading.Thread(target=lambda: self.stations_start_fetch(),
+                                      daemon=True)
+            thread.start()
 
     def stations_file_button(self):
         self.clear_frame(self.status_frame)
