@@ -4,6 +4,7 @@ import patatmo as patatmo
 import pandas as pd
 import fiona
 import geopandas as gpd
+import datetime
 from shapely.geometry import Polygon
 import numpy as np
 from netatmo_auth_app import OAuth2Token
@@ -13,14 +14,16 @@ from patatmo.api.errors import ApiResponseError
 
 class Stations:
 
-    CHECKPOINT_FILE = 'checkpoint.txt'
-    OUTPUT_CSV_FILE = 'output/List_Netatmo_stations.csv'
+    CHECKPOINT_FILE = 'stations_checkpoint.txt'
+    #OUTPUT_CSV_FILE = 'output/List_Netatmo_stations.csv'
+    OUTPUT_FILE_START = 'output/stations/List_Netatmo_stations'
     def __init__(self):
         self.shapefile_path = ''
         self.status_message = 'Not fetching currently.'
         self.previous_execution = False
         self.check_for_previous_execution()
         self.create_output_folder()
+        self.output_filename = None
         self.stop_sign = True
         self.date_range = None
 
@@ -28,12 +31,12 @@ class Stations:
         print(f"Date range received: start:{start}, end:{end}, freq:{freq}")
 
     def create_output_folder(self):
-        if not os.path.exists("output/"):
+        if not os.path.exists("output/stations/"):
             print("output dont exist")
-            os.makedirs("output/")
+            os.makedirs("output/stations/")
             print("Output folder created.")
         else:
-            print("Output folder already exists. No need to create anything.")
+            print("Station output folder already exists. No need to create anything.")
 
     def get_shapefile_path(self):
         return self.shapefile_path
@@ -47,6 +50,15 @@ class Stations:
             self.status_message = 'Please choose a shapefile.'
             return self.status_message
         else:
+            # Write the outputfile name based on the time of the start?
+            if self.output_filename is None:
+                time = datetime.datetime.now()
+                time = time.strftime("%Y-%m-%d %H:%M:%S")
+                print(f"time: {time}")
+                time = time.replace(' ', '_')
+                time = time.replace(':','-')
+                self.output_filename = self.OUTPUT_FILE_START + '_' + time + '.csv'
+                print(f"Output filename: {self.output_filename}")
             self.stop_sign = False
             self.status_message = 'Fetching stations in progress.'
             val = self.fetch_stations()
@@ -63,16 +75,18 @@ class Stations:
     def previous_execution_exists(self):
         return self.previous_execution
 
+    def destroy_output_file(self):
+        print("Deleting the unfinished output file.")
+        if self.output_filename is not None:
+            os.remove(self.output_filename)
+
     def reset_checkpoint(self):
         cp_exists = os.path.exists(self.CHECKPOINT_FILE)
         if cp_exists:
             open(self.CHECKPOINT_FILE, 'w').close()
             self.shapefile_path = ''
-        output_csv_exists = os.path.exists(self.OUTPUT_CSV_FILE)
-        if output_csv_exists:
-            # This file needs to be deleted so the headers will go nicely.
-            print('Deleting the output csv file.')
-            os.remove(self.OUTPUT_CSV_FILE)
+            self.output_filename = None
+            self.previous_execution = False
 
     def check_for_previous_execution(self):
         exists = os.path.exists(self.CHECKPOINT_FILE)
@@ -89,8 +103,9 @@ class Stations:
                 # Read the shapefile path value here from the checkpoint and set
                 # it to the class variable.
                 with open(self.CHECKPOINT_FILE) as f:
-                    shp_file = f.readlines()[2]
-                    self.shapefile_path = shp_file
+                    lines = f.readlines()
+                    self.shapefile_path = lines[2].strip()
+                    self.output_filename = lines[3].strip()
         if not exists:
             f = open(self.CHECKPOINT_FILE, 'x')
             f.close()
@@ -134,17 +149,21 @@ class Stations:
             startx = int(line1)
             starty = int(line2)
 
-        station_file_exists = os.path.isfile(self.OUTPUT_CSV_FILE)
+        station_file_exists = os.path.isfile(self.output_filename)
         for x in range(startx, len(lon_tiles) - 1):
             print("X iteration.")
             for y in range(starty, len(lat_tiles) - 1):
                 if self.stop_sign:
                     print("Stop sign received. Stopping.")
                     # Write checkpoint and quit.
+                    list_all_stations.to_csv(self.output_filename,
+                                             mode='a',
+                                             header=not station_file_exists)
                     with open(self.CHECKPOINT_FILE, "w") as f:
                         f.write(f"{x}\n")
                         f.write(f"{y}\n")
-                        f.write(f"{self.shapefile_path}")
+                        f.write(f"{self.shapefile_path}\n")
+                        f.write(f"{self.output_filename}")
                     return 'Dowloading stopped.'
                 starty = 0
                 ### Create a georeferenced polygon of the tile.
@@ -176,16 +195,39 @@ class Stations:
                         print("Service unavailable exception, sleeping for 10s.")
                         sleep(10)
                         continue
+                    elif "Request to the backend service timed out" in str(e):
+                        print("Request timed out, sleeping for 30s")
+                        sleep(30)
+                        continue
+                    elif "API limit exceeded" in str(e):
+                        # Should we implement some status message system to tell
+                        # the user if the program is sleeping?
+                        print("API limit exceeded. Going to sleep.")
+                        sleep(1000)
+                        continue
+                    elif "Access token expired" in str(e):
+                        print("Expired token, trying to refresh.")
+                        if token.expired:
+                            token.refresh()
+                            newtoken = OAuth2Token.from_file()
+                            client.authentication.tokens = {
+                                'access_token': newtoken.access_token,
+                                'refresh_token': newtoken.refresh_token
+                            }
+                            sleep(5)
+                        continue
                     else:
                         print("Unknown ApiResponseError: ", e)
                         print("Exception type/name: ", type(e).__name__)
-                        list_all_stations.to_csv(self.OUTPUT_CSV_FILE,
+                        list_all_stations.to_csv(self.output_filename,
                                                  mode='a',
                                                  header=not station_file_exists)
                         with open(self.CHECKPOINT_FILE, "w") as f:
                             f.write(f"{x}\n")
                             f.write(f"{y}\n")
-                            f.write(f"{self.shapefile_path}")
+                            f.write(f"{self.shapefile_path}\n")
+                            f.write(f"{self.output_filename}")
+                        self.stop_sign = True
                         return ('The execution ran into an unexpected exception,'
                                 ' stopping the download.')
 
@@ -194,14 +236,16 @@ class Stations:
                     print("----")
                     print("Exception type/name: ", type(e).__name__)
                     print("----")
-                    list_all_stations.to_csv(self.OUTPUT_CSV_FILE,
+                    list_all_stations.to_csv(self.output_filename,
                                              mode='a',
                                              header=not station_file_exists)
 
                     with open(self.CHECKPOINT_FILE, "w") as f:
                         f.write(f"{x}\n")
                         f.write(f"{y}\n")
-                        f.write(f"{self.shapefile_path}")
+                        f.write(f"{self.shapefile_path}\n")
+                        f.write(f"{self.output_filename}")
+                    self.stop_sign = True
                     return ('The execution ran into an unexpected exception,'
                             ' stopping the download.')
 
@@ -249,7 +293,11 @@ class Stations:
                 del df_filt, df, p, poly
                 sleep(1)
 
-        list_all_stations.to_csv(self.OUTPUT_CSV_FILE,
+        # The download has finished.
+        list_all_stations.to_csv(self.output_filename,
                                  mode='a',
                                  header=not station_file_exists)
+        self.stop_sign = True
+        # What to do for the checkpoint file when downloading has finished?
+        self.reset_checkpoint()
         return 'Finished downloading stations.'
