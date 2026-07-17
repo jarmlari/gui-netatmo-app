@@ -43,7 +43,7 @@ class Temperatures:
             line1 = f.readline()
             f.close()
             if len(line1) == 0:
-                # This is the execution where a previous info doesnt exist?
+                # This is the execution where a previous info doesn't exist?
                 print("New execution. Wtf and why are we here?")
                 self.previous_execution = False
                 # Should we call the reset function?
@@ -54,6 +54,7 @@ class Temperatures:
                     lines = f.readlines()
                     self.stationsfile_path = lines[4].strip()
                     start, end, freq = lines[5].split("_")
+                    self.date_input = f"{start}_{end}_{freq}".strip()
                     self.date_range = pd.date_range(start=start, end=end, freq=freq)
                     # Read and save the output folder name.
                     self.output_folder = lines[6].strip()
@@ -138,17 +139,13 @@ class Temperatures:
             self.update_status(f"Request limit reached. Sleeping for a while and then trying again...")
         return True
 
-    def write_progress(self, yr, mon, dfbig, df, y, x):
-        print("Write progress.")
+    def write_progress(self, yr, mon, df, y, x):
         filename = self.OUTPUT_FILE_START + str(yr) + '-{0:02d}'.format(mon) + '.csv'
         self.output_filename = filename
         # Check if file for this month in this year exists in the current output folder.
         month_file_exists = os.path.isfile(self.output_folder + filename)
-        # Add progress of this y iteration to the df object of the whole month.
-        dfbig = pd.concat([dfbig, df])
-        print('The dataframe now contains ' + str(len(dfbig)) + ' measurements')
         # Write the progress to this month's output file.
-        dfbig.to_csv(self.output_folder + filename,
+        df.to_csv(self.output_folder + filename,
                              mode="a",
                              header=not month_file_exists)
         # Write everything necessary to the checkpoint file.
@@ -160,7 +157,7 @@ class Temperatures:
             f.write(f"{self.stationsfile_path}\n")
             f.write(f"{self.date_input}\n")
             f.write(f"{self.output_folder}")
-        return dfbig
+        return df
 
     def fetch_temp(self):
         list_stations = pd.read_csv(self.stationsfile_path)
@@ -174,17 +171,11 @@ class Temperatures:
         def unix_time_millis(dt):
             return (dt - epoch).total_seconds()
 
-        startDate_dt = datetime.datetime(2018, 6, 21, 0, 0, 0, 0,
-                                         tzinfo=datetime.timezone.utc)
-        endDate_dt = datetime.datetime(2018, 7, 1, 0, 0, 0, 0,
-                                       tzinfo=datetime.timezone.utc)
-        startDate = str(int(unix_time_millis(startDate_dt)))
-        endDate = str(int(unix_time_millis(endDate_dt)))
-
         counter = 0
         years = list(dict.fromkeys(self.date_range.year))
         months = list(dict.fromkeys(self.date_range.month))
 
+        # Read from the checkpoint file where the last execution stopped (year, month, y and x).
         f = open(self.CHECKPOINT_FILE)
         yearcp = f.readline()
         yearcp = yearcp[0:4]
@@ -194,13 +185,15 @@ class Temperatures:
         xcp = f.readline()
         f.close()
 
+        # Set loop variables based on the checkpoint file so we can continue from where the last execution left off.
         if len(yearcp) == 0:
-            print("No previous execution info. Starting from the beginning.")
+            # No previous execution, starting from the beginning.
             startyear = years[0]
             startmonth = months[0]
             starty = 0
             startx = 0
         else:
+            # Start where the previous execution left off.
             yearidx = years.index(int(yearcp))
             years = years[yearidx:]
             monthidx = months.index(int(monthcp))
@@ -233,7 +226,6 @@ class Temperatures:
                 startDate = str(int(unix_time_millis(startDate_dt)))
                 endDate = str(int(unix_time_millis(endDate_dt)))
 
-                dfNetatmo_big = pd.DataFrame()
                 step = 200
                 for y in range(starty, len(list_stations), step):
                     starty = 0
@@ -246,9 +238,9 @@ class Temperatures:
                         errorcount = 0
                         if x == len(list_stations):
                             break
+                        # Handle user input stop.
                         if self.stop_event.is_set():
-                            print("Stop sign received. Stopping.")
-                            self.write_progress(yr, mon, dfNetatmo_big, dfNetatmo, y, x)
+                            self.write_progress(yr, mon, dfNetatmo, y, x)
                             return 'Downloading stopped.'
                         while True:
                             try:
@@ -290,11 +282,11 @@ class Temperatures:
                                 print(repr(e))
                                 if "API limit exceeded" in str(e):
                                     print("Going to sleep.")
-                                    completed = self.wait_with_countdown(1800)
+                                    completed = self.wait_with_countdown(1000)
                                     if not completed:
                                         self.update_status("Download stopped.")
                                         # Save progress if stop is called while sleeping.
-                                        self.write_progress(yr, mon, dfNetatmo_big, dfNetatmo, y, x)
+                                        self.write_progress(yr, mon, dfNetatmo, y, x)
                                         return 'Downloading stopped'
 
                                     # Could we just do the continue here either way?
@@ -323,24 +315,12 @@ class Temperatures:
                                 print(type(e).__name__)
                                 print('The temporary dataframe contains ' + str(
                                     len(dfNetatmo)) + ' measurements')
-                                self.write_progress(yr, mon, dfNetatmo_big, dfNetatmo, y, x)
+                                self.write_progress(yr, mon, dfNetatmo, y, x)
                                 return "Unknown exception."
 
+                    # Write the downloaded data to the monthly output file on every y-iteration.
                     print('The temporary dataframe contains ' + str(len(dfNetatmo)) + ' measurements')
-                    # Do we really need the big df? Just append the normal df to the csv on every y iteration.
-                    # dfNetatmo_big = pd.concat([dfNetatmo_big, dfNetatmo])
-                    #print('The dataframe now contains ' + str(len(dfNetatmo_big)) + ' measurements')
-                    print('One y-iteration complete. ')
                     filename = self.OUTPUT_FILE_START + str(yr) + '-{0:02d}'.format(mon) + '.csv'
                     self.output_filename = filename
                     month_file_exists = os.path.isfile(self.output_folder + filename)
                     dfNetatmo.to_csv(self.output_folder + filename, mode="a", header=not month_file_exists)
-                    print("Writing checkpoint.")
-                    with open(self.CHECKPOINT_FILE, 'w') as f:
-                        f.write(f"{yr}\n")
-                        f.write(f"{mon}\n")
-                        f.write(f"{y}\n")
-                        f.write(f"{y + step}\n")
-                        f.write(f"{self.stationsfile_path}\n")
-                        f.write(f"{self.date_input}\n")
-                        f.write(f"{self.output_folder}")
