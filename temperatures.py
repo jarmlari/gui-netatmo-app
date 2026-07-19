@@ -5,7 +5,6 @@ import pandas as pd
 import patatmo as patatmo
 import datetime
 import threading
-from netatmo_auth_app import OAuth2Token
 from time import sleep
 
 class Temperatures:
@@ -160,6 +159,7 @@ class Temperatures:
         return df
 
     def fetch_temp(self):
+        from netatmo_auth_app import OAuth2Token
         list_stations = pd.read_csv(self.stationsfile_path)
         token = OAuth2Token.from_file()
         client = patatmo.api.client.NetatmoClient()

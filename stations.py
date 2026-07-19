@@ -7,8 +7,6 @@ import geopandas as gpd
 import datetime
 from shapely.geometry import Polygon
 import numpy as np
-from netatmo_auth_app import OAuth2Token
-import subprocess
 from time import sleep
 from patatmo.api.errors import ApiResponseError
 
@@ -113,7 +111,7 @@ class Stations:
             self.previous_execution = False
 
     def fetch_stations(self):
-
+        from netatmo_auth_app import OAuth2Token
         token = OAuth2Token.from_file()
         if token.expired:
             token.refresh()

@@ -1,64 +1,75 @@
 import tkinter as tk
 import customtkinter as ctk
+import authentication
 import stations
+import temperatures
 import threading
-import netatmo_auth_app
 import os
 import sys
 import subprocess
+import webbrowser
 from tkinter import filedialog as fd
 from tkinter import ttk, messagebox
 from datetime import datetime
 
-import temperatures
 
 
 class MyGUI:
 
+    PAGE_STYLES = {
+        "stations": {
+            "accent": "#2E6BE6",
+            "tint": "#EAF1FD",
+            "title": "Stations",
+            "subtitle": "Download a list of Netatmo stations",
+        },
+        "temperatures": {
+            "accent": "#E0621F",
+            "tint": "#FDEFE7",
+            "title": "Temperatures",
+            "subtitle": "Download temperature readings from Netatmo stations",
+        },
+    }
+    AUTH_CREATION_INFO = ("netatmo_app.json created. Please open this link in your"
+                          " browser and login there with your netatmo credentials: ")
 
     def __init__(self):
-        ctk.set_appearance_mode('system')
-        #ctk.set_default_color_theme()
+        ctk.set_appearance_mode('light')
         self.root = ctk.CTk()
+        self.authentication = authentication.Authentication()
         self.stations = stations.Stations()
         self.temperatures = temperatures.Temperatures()
-        self.root.geometry("900x500")
+        self.root.geometry("900x600")
         self.root.title("Netatmo app")
         self.temp_start_entry = None
         self.temp_end_entry = None
         self.temp_freq_var = None
         self.freq_menu = None
+        self.auth_id_entry = None
+        self.auth_secret_entry = None
         base_dir = os.path.dirname(os.path.abspath(__file__))
         self.stat_output_folder = os.path.join(base_dir, "output/stations/")
         self.temp_output_folder = os.path.join(base_dir, "output/temperatures/")
-        self.CHECKPOINT_TEXT = f'''
-                A checkpoint for fetching stations from a shapefile in location: 
-                {self.stations.get_shapefile_path()} is in memory. Continue that process by 
-                pressing "start" or begin a new fetching process by pressing 
-                "reset". The reset button will also reset/destroy the output csv
-                file of the last run.
-                '''
-        self.temperatures.set_status_callback(self.temp_status_update)
 
         # Options frame.
         self.options_frame = ctk.CTkFrame(master=self.root, width= 150,
                                           border_width=1, border_color='black')
-        self.options_frame.pack(side='left', fill='y', pady=5, padx=5)
+        self.options_frame.pack(side='left', fill='y', pady=(0, 5))
         self.frame_colour = self.options_frame.cget('fg_color')
 
         # Main frame.
         self.main_frame = ctk.CTkFrame(master=self.root, fg_color=self.root.cget('fg_color'))
-        self.main_frame.pack(side='left', fill='both', expand=True, pady=5, padx=5)
+        self.main_frame.pack(side='left', fill='both', expand=True, pady=(0,5))
 
-        # Home page button.
-        self.home_btn = ctk.CTkButton(self.options_frame, text="Home & Instructions",
+        # Temperatures page button.
+        self.temp_btn = ctk.CTkButton(self.options_frame, text="Temperatures",
                                       text_color='black', font=('Bold', 14),
                                       width=70, hover=False, fg_color=self.frame_colour,
-                                      command=lambda: self.change_page(self.home_page))
-        self.home_btn.place(x=10, y=50)
-        self.home_indicate = ctk.CTkLabel(self.options_frame, text='', width=5,
+                                      command=lambda: self.change_page(self.temperatures_page))
+        self.temp_btn.place(x=10, y=50)
+        self.temp_indicate = ctk.CTkLabel(self.options_frame, text='', width=5,
                                           height=33, fg_color=self.frame_colour)
-        self.home_indicate.place(x=3, y=50)
+        self.temp_indicate.place(x=3, y=50)
 
         # Stations page button.
         self.stat_btn = ctk.CTkButton(self.options_frame, text="Stations",
@@ -70,15 +81,16 @@ class MyGUI:
                                           height=33, fg_color=self.frame_colour)
         self.stat_indicate.place(x=3, y=100)
 
-        # Temperatures page button.
-        self.temp_btn = ctk.CTkButton(self.options_frame, text="Temperatures",
+        # Authentication page button.
+        self.auth_btn = ctk.CTkButton(self.options_frame, text="Authentication",
                                       text_color='black', font=('Bold', 14),
                                       width=70, hover=False, fg_color=self.frame_colour,
-                                      command=lambda: self.change_page(self.temperatures_page))
-        self.temp_btn.place(x=10, y=150)
-        self.temp_indicate = ctk.CTkLabel(self.options_frame, text='', width=5,
+                                      command=lambda: self.change_page(self.auth_page))
+        self.auth_btn.place(x=10, y=150)
+        self.auth_indicate = ctk.CTkLabel(self.options_frame, text='', width=5,
                                           height=33, fg_color=self.frame_colour)
-        self.temp_indicate.place(x=3, y=150)
+        self.auth_indicate.place(x=3, y=150)
+
 
         self.status_frame = None
         self.stat_status_label = None
@@ -86,14 +98,29 @@ class MyGUI:
         self.temp_status_frame = None
         self.temp_status_label = None
         self.temp_button_frame = None
+        self.auth_status_frame = None
 
-        self.server_thread = threading.Thread(target=netatmo_auth_app.app.run)
-        self.server_thread.daemon = True
-        self.server_thread.start()
-        print("Authentication application started.")
+        # Start the authentication app if its setup, otherwise open the authentication page.
+        self.server_thread = None
+        auth = self.can_we_execute_auth()
+        if auth:
+            self.temperatures_page()
+        else:
+            self.auth_page()
 
-        self.home_page()
+        self.CHECKPOINT_TEXT = f'''
+                A checkpoint for fetching stations is in memory. Continue that process by 
+                pressing "start" or begin a new fetching process by pressing 
+                "reset". The reset button will also reset/destroy the output csv
+                file of the last run.
+                '''
+        self.temperatures.set_status_callback(self.temp_status_update)
         self.root.mainloop()
+
+    def darken(self, hex_color, factor=0.85):
+        hex_color = hex_color.lstrip("#")
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
 
     def temp_status_update(self, msg):
         if self.temp_status_label is not None and self.temp_status_label.winfo_exists():
@@ -120,9 +147,9 @@ class MyGUI:
         return filename
 
     def hide_indicators(self):
-        self.home_indicate.configure(fg_color=self.frame_colour)
         self.stat_indicate.configure(fg_color=self.frame_colour)
         self.temp_indicate.configure(fg_color=self.frame_colour)
+        self.auth_indicate.configure(fg_color=self.frame_colour)
         pass
 
     def indicate(self, lb):
@@ -146,18 +173,15 @@ class MyGUI:
         self.delete_pages()
         page()
 
-    def home_page(self):
-        self.indicate(self.home_indicate)
-        home_frame = ctk.CTkFrame(self.main_frame)
-        label = ctk.CTkLabel(home_frame, text="Home page")
-        label.place(x=15, y=15)
-        home_frame.pack()
-
     def stations_page(self):
         self.indicate(self.stat_indicate)
+        style = self.PAGE_STYLES["stations"]
         # Frame for the whole page.
         stations_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
         stations_frame.pack(fill="both", expand=True)
+
+        top_strip = ctk.CTkFrame(stations_frame, fg_color=style["accent"], height=4)
+        top_strip.pack(side="top", fill="x", padx=0, pady=0)
 
         # Button to open the output folder.
         output_frame = ctk.CTkFrame(stations_frame,
@@ -181,9 +205,15 @@ class MyGUI:
         title_frame = ctk.CTkFrame(stations_frame, fg_color=self.root.cget('fg_color'))
         title_frame.pack(pady=10)
         label = ctk.CTkLabel(title_frame,
-                          text="Download netatmo stations",
-                          font=("DM Sans", 14, "bold"))
-        label.pack()
+                             text=style["title"],
+                             font=("DM Sans", 18, "bold"),
+                             text_color="#1A1A1A")
+        label.pack(pady=(10, 0))
+        subtitle = ctk.CTkLabel(title_frame,
+                                text=style["subtitle"],
+                                font=("DM Sans", 12),
+                                text_color="#555555")
+        subtitle.pack(pady=(0, 10))
 
         # Program status info frame and header for it.
         status_container = ctk.CTkFrame(stations_frame, fg_color=self.root.cget('fg_color'))
@@ -221,13 +251,15 @@ class MyGUI:
         file_btn.pack(side='left', padx=3)
 
         start_fetching_btn = ctk.CTkButton(button_frame,
-                                       text="Start fetching stations",
-                                       command=self.stations_start_button)
+                                           text="Start fetching stations",
+                                           command=self.stations_start_button,
+                                           fg_color=style["accent"])
         start_fetching_btn.pack(side='left', padx=3)
 
         stop_fetching_btn = ctk.CTkButton(button_frame,
-                                       text="Stop fetching stations",
-                                       command=self.stations_stop_button)
+                                          text="Stop fetching stations",
+                                          command=self.stations_stop_button,
+                                          fg_color=style["accent"])
         stop_fetching_btn.pack(side='left', padx=3)
 
 
@@ -335,10 +367,14 @@ class MyGUI:
 
     def temperatures_page(self):
         self.indicate(self.temp_indicate)
-
+        style = self.PAGE_STYLES["temperatures"]
         # Frame for the whole page.
         temperatures_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
         temperatures_frame.pack(fill="both", expand=True)
+
+        # Thin accent strip along the top of the page.
+        top_strip = ctk.CTkFrame(temperatures_frame, fg_color=style["accent"], height=4)
+        top_strip.pack(side="top", fill="x")
 
         # Button to open the output folder.
         output_frame = ctk.CTkFrame(temperatures_frame,
@@ -362,9 +398,15 @@ class MyGUI:
         title_frame = ctk.CTkFrame(temperatures_frame, fg_color=self.root.cget('fg_color'))
         title_frame.pack(pady=10)
         label = ctk.CTkLabel(title_frame,
-                             text="Download temperatures from netatmo stations",
-                             font=("DM Sans", 14, "bold"))
-        label.pack()
+                             text=style["title"],
+                             font=("DM Sans", 18, "bold"),
+                             text_color="#1A1A1A")
+        label.pack(pady=(10, 0))
+        subtitle = ctk.CTkLabel(title_frame,
+                                text=style["subtitle"],
+                                font=("DM Sans", 12),
+                                text_color="#555555")
+        subtitle.pack(pady=(0, 10))
 
         # Program status info frame and header for it.
         status_container = ctk.CTkFrame(temperatures_frame,
@@ -377,7 +419,7 @@ class MyGUI:
         )
         status_frame_desc.pack(anchor="w", padx=10, pady=(0, 0))
         self.temp_status_frame = ctk.CTkFrame(status_container, border_width=1,
-                                         border_color='gray', width=550, height=60)
+                                         border_color=style["accent"], width=550, height=60)
         self.temp_status_frame.pack(pady=(0, 0))
         self.temp_status_frame.pack_propagate(False)
 
@@ -458,28 +500,40 @@ class MyGUI:
                                      text_color=("gray10", "gray90"),
                                      hover_color=("gray65", "gray40"))
             file_btn.pack(side='top', padx=3, pady=(50, 10))
+
             start_fetching_btn = ctk.CTkButton(other_btns_frame,
                                                text="Start",
-                                               command=self.temp_start_button)
+                                               command=self.temp_start_button,
+                                               fg_color=style["accent"],
+                                               hover_color=self.darken(style["accent"]),
+                                               font=("DM Sans", 13, "bold"))
             start_fetching_btn.pack(side='top', padx=3, pady=5)
             # start download button.
 
     def temp_stop_view(self):
         # Create stop button to the button frame.
+        style = self.PAGE_STYLES["temperatures"]
         stop_fetching_btn = ctk.CTkButton(self.temp_button_frame,
                                           text="Stop",
-                                          command=self.temp_stop_button)
+                                          command=self.temp_stop_button,
+                                          fg_color=style["accent"],
+                                          hover_color=self.darken(style["accent"]))
         stop_fetching_btn.pack(side='top', pady=40)
 
     def temp_continue_reset_view(self):
         self.clear_frame(self.temp_button_frame)
+        style = self.PAGE_STYLES["temperatures"]
         # Create continue and reset buttons.
         continue_btn = ctk.CTkButton(self.temp_button_frame,
                                      text="Continue",
-                                     command=self.temp_start_button)
+                                     command=self.temp_start_button,
+                                     fg_color=style["accent"],
+                                     hover_color=self.darken(style["accent"]))
         reset_btn = ctk.CTkButton(self.temp_button_frame,
                                   text="Reset",
-                                  command=self.temp_reset)
+                                  command=self.temp_reset,
+                                  fg_color=style["accent"],
+                                  hover_color=self.darken(style["accent"]))
         continue_btn.pack(side='left', anchor='n', pady=(30, 100), padx=(200, 5))
         reset_btn.pack(side='left', anchor='n', pady=(30, 100), padx=5)
 
@@ -521,5 +575,83 @@ class MyGUI:
         self.temperatures.reset_checkpoint()
         self.clear_frame(self.temp_button_frame)
         self.change_page(self.temperatures_page)
+
+    def auth_page(self):
+        self.indicate(self.auth_indicate)
+        # Frame for the whole page.
+        auth_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
+        auth_frame.pack(fill="both", expand=True)
+
+        # Page title.
+        title_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
+        title_frame.pack(pady=10)
+        label = ctk.CTkLabel(title_frame,
+                             text="Setup the authentication",
+                             font=("DM Sans", 14, "bold"))
+        label.pack()
+
+        # Frame to host the functionalities/info that can change on this page.
+        self.auth_status_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
+        self.auth_status_frame.pack(fill="both", expand=True)
+
+        # Check if netatmo_app.json exists and show the page based on that.
+        if not self.authentication.netatmo_json_exists():
+            # Two form fields to collect user info and a save button.
+            # You can find the credentials from here: https://dev.netatmo.com/apps/.
+            subtitle = ctk.CTkLabel(self.auth_status_frame, text="You can find the id and secret from https://dev.netatmo.com/apps/")
+            subtitle.pack(pady=(0, 10))
+            self.auth_id_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_id")
+            self.auth_secret_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_secret")
+            self.auth_id_entry.pack(pady=3)
+            self.auth_secret_entry.pack(pady=3)
+            save_btn = ctk.CTkButton(self.auth_status_frame, text="Save", command=self.auth_save_btn)
+            save_btn.pack(pady=10)
+        # Does .netatmo_token exist?
+        elif not self.authentication.token_file_exists():
+            label = ctk.CTkLabel(self.auth_status_frame, text=self.AUTH_CREATION_INFO)
+            label.pack()
+            link_btn = ctk.CTkButton(self.auth_status_frame, text="http://127.0.0.1:5000",
+                                     command=self.auth_link_btn)
+            link_btn.pack()
+        else:
+            label = ctk.CTkLabel(self.auth_status_frame, text="Authentication setup is OK")
+            label.pack()
+
+    def auth_save_btn(self):
+        # Pass the form data to the authentication code to create the json with them.
+        client_id = self.auth_id_entry.get()
+        client_secret = self.auth_secret_entry.get()
+        self.authentication.create_netatmo_json(client_id, client_secret)
+        # After creating the json file there^ show a message to the user prompting them to open the browser link and login there.
+        self.auth_init_complete_view()
+
+    def auth_init_complete_view(self):
+        self.clear_frame(self.auth_status_frame)
+        if self.authentication.netatmo_json_exists():
+            import netatmo_auth_app
+            label = ctk.CTkLabel(self.auth_status_frame, text=self.AUTH_CREATION_INFO)
+            label.pack()
+            link_btn = ctk.CTkButton(self.auth_status_frame, text="http://127.0.0.1:5000",
+                                     command=self.auth_link_btn)
+            link_btn.pack()
+            self.server_thread = threading.Thread(target=netatmo_auth_app.app.run)
+            self.server_thread.daemon = True
+            self.server_thread.start()
+            print("Authentication application started.")
+
+    def auth_link_btn(self):
+        webbrowser.open("http://127.0.0.1:5000")
+
+    def can_we_execute_auth(self):
+        if self.authentication.netatmo_json_exists():
+            import netatmo_auth_app
+            self.server_thread = threading.Thread(target=netatmo_auth_app.app.run)
+            self.server_thread.daemon = True
+            self.server_thread.start()
+            print("Authentication application started.")
+            return True
+        else:
+            print("Please setup the authentication from the authentication page.")
+            return False
 
 MyGUI()
