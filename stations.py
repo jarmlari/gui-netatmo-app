@@ -76,7 +76,8 @@ class Stations:
     def destroy_output_file(self):
         print("Deleting the unfinished output file.")
         if self.output_filename is not None:
-            os.remove(self.output_filename)
+            if os.path.exists(self.output_filename):
+                os.remove(self.output_filename)
 
     def reset_checkpoint(self):
         cp_exists = os.path.exists(self.CHECKPOINT_FILE)
@@ -120,8 +121,10 @@ class Stations:
                                         'refresh_token': token.refresh_token}
 
         shp = gpd.read_file(self.shapefile_path)
+        print(f'The crs of the read shapefile: {shp.crs}')
+
         enwl = shp.dissolve()
-        enwl = enwl.set_crs('epsg:4326')
+        enwl = enwl.to_crs('epsg:4326')
         ## Define boundaries of the box in which data will be gathered.
         llon, llat, ulon, ulat = enwl.geometry.bounds.values.squeeze()
         ## The Netatmo API automaticly lowers the amount of stations one can access on large scales
