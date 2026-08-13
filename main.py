@@ -329,7 +329,11 @@ class MyGUI:
 
     def stations_start_fetch(self):
         message = self.stations.start_fetching()
-        self.stat_status_label.configure(text=message)
+        self.root.after(0, self.set_stat_status, message)
+
+    def set_stat_status(self, message):
+        if self.stat_status_label is not None and self.stat_status_label.winfo_exists():
+            self.stat_status_label.configure(text=message)
 
     def stations_start_button(self):
         if self.previous_info_frame is not None:
