@@ -288,7 +288,7 @@ class Temperatures:
                                         # Save progress if stop is called while sleeping.
                                         self.write_progress(yr, mon, dfNetatmo, y, x)
                                         return 'Downloading stopped'
-
+                                    self.update_status("Downloading in progress...")
                                     # Could we just do the continue here either way?
                                     continue
                                 elif "Access token expired" in str(e):
