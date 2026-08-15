@@ -117,62 +117,6 @@ class MyGUI:
         self.temperatures.set_status_callback(self.temp_status_update)
         self.root.mainloop()
 
-    def darken(self, hex_color, factor=0.85):
-        hex_color = hex_color.lstrip("#")
-        r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
-        return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
-
-    def temp_status_update(self, msg):
-        if self.temp_status_label is not None and self.temp_status_label.winfo_exists():
-            self.root.after(0, lambda: self.temp_status_label.configure(text=msg))
-
-    def select_shapefile(self):
-        filetypes = (
-            ('Shapefiles', '*.shp'),
-            ('All files', '*.*')
-        )
-        filename = fd.askopenfilename(title='Select a shapefile',
-                                      initialdir='/',
-                                      filetypes=filetypes)
-        return filename
-
-    def select_stations_file(self):
-        filetypes = (
-            ('csv', '*.csv'),
-            ('All files', '*.*')
-        )
-        filename = fd.askopenfilename(title='Select csv file',
-                                      initialdir='/',
-                                      filetypes=filetypes)
-        return filename
-
-    def hide_indicators(self):
-        self.stat_indicate.configure(fg_color=self.frame_colour)
-        self.temp_indicate.configure(fg_color=self.frame_colour)
-        self.auth_indicate.configure(fg_color=self.frame_colour)
-        pass
-
-    def indicate(self, lb):
-        self.hide_indicators()
-        lb.configure(fg_color='#158aff')
-        pass
-
-    def clear_frame(self, frame):
-        print("Executing clear_frame().")
-        if frame is None:
-            return
-        for widgets in frame.winfo_children():
-            widgets.destroy()
-
-    def delete_pages(self):
-        for frame in self.main_frame.winfo_children():
-            frame.destroy()
-        self.temp_status_label = None
-
-    def change_page(self, page):
-        self.delete_pages()
-        page()
-
     def stations_page(self):
         self.indicate(self.stat_indicate)
         style = self.PAGE_STYLES["stations"]
@@ -283,7 +227,254 @@ class MyGUI:
                                   command=lambda: self.stations_reset_button(self.previous_info_frame))
             reset_btn.pack()
 
-    def open_output_folder(self, folder):
+    def temperatures_page(self):
+        self.indicate(self.temp_indicate)
+        style = self.PAGE_STYLES["temperatures"]
+        # Frame for the whole page.
+        temperatures_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
+        temperatures_frame.pack(fill="both", expand=True)
+
+        # Thin accent strip along the top of the page.
+        top_strip = ctk.CTkFrame(temperatures_frame, fg_color=style["accent"], height=4)
+        top_strip.pack(side="top", fill="x")
+
+        # Button to open the output folder. Can this be put to a function?
+        output_frame = ctk.CTkFrame(temperatures_frame,
+                                    fg_color=self.root.cget('fg_color'))
+        output_frame.pack(side="bottom", anchor="se", padx=5, pady=(0, 10)) # pady=(above, under)
+        output_folder_btn = ctk.CTkButton(output_frame,
+                                          text="Open output folder",
+                                          command=lambda: self.open_output_folder(self.temp_output_folder),
+                                          fg_color="transparent",
+                                          border_width=1,
+                                          border_color="#1f6aa5",
+                                          text_color=("#1f6aa5", "gray90"),
+                                          hover_color=("gray85", "gray25"),
+                                          width=160,
+                                          height=28,
+                                          font=("DM Sans", 12),
+                                          corner_radius=6)
+        output_folder_btn.pack(side="right", padx=5)
+
+        # Page title.
+        title_frame = ctk.CTkFrame(temperatures_frame, fg_color=self.root.cget('fg_color'))
+        title_frame.pack(pady=10)
+        label = ctk.CTkLabel(title_frame,
+                             text=style["title"],
+                             font=("DM Sans", 18, "bold"),
+                             text_color="#1A1A1A")
+        label.pack(pady=(10, 0))
+        subtitle = ctk.CTkLabel(title_frame,
+                                text=style["subtitle"],
+                                font=("DM Sans", 12),
+                                text_color="#555555")
+        subtitle.pack(pady=(0, 10))
+
+        # Program status info frame and header for it.
+        status_container = ctk.CTkFrame(temperatures_frame,
+                                        fg_color=self.root.cget('fg_color'))
+        status_container.pack(pady=5)
+        status_frame_desc = ctk.CTkLabel(
+            status_container,
+            text="Program status:",
+            font=ctk.CTkFont(size=11)
+        )
+        status_frame_desc.pack(anchor="w", padx=10, pady=(0, 0))
+        self.temp_status_frame = ctk.CTkFrame(status_container, border_width=1,
+                                         border_color=style["accent"], width=550, height=60)
+        self.temp_status_frame.pack(pady=(0, 0))
+        self.temp_status_frame.pack_propagate(False)
+
+        # Set temperature download status info.
+        self.temp_status_label = ctk.CTkLabel(self.temp_status_frame, text="Download temperatures")
+        self.temp_status_label.pack(expand=True)
+
+        # Initialise button frame for this page.
+        self.temp_button_frame = ctk.CTkFrame(temperatures_frame,
+                                              fg_color=self.root.cget('fg_color'))
+        self.temp_button_frame.pack(fill="both", expand=True, padx=(5, 15), pady=(0, 5))
+
+        # Find out the program status and show the corresponding page based on that.
+        if self.temperatures.is_currently_executing():
+            # If there is a live download then we need to show the stop button view.
+            self.temp_status_label.configure(text="Downloading in progress...")
+            self.temp_stop_view()
+        elif self.temperatures.previous_execution_exists():
+            # If there is not a live download going on, but a previous process exists we shot the continue/reset view.
+            self.temp_status_label.configure(text="A previous download exists. Continue that download or reset it and start a new one?")
+            self.temp_continue_reset_view()
+        else:
+            # No ongoing or previous download. Show the base view. Put this stuff to a function?
+            date_frame = ctk.CTkFrame(self.temp_button_frame, fg_color=self.root.cget('fg_color'))
+            date_frame.columnconfigure(0, weight=1)
+            date_frame.columnconfigure(1, weight=1)
+            date_frame.pack(side='left', pady=10, padx=10)
+
+            ctk.CTkLabel(date_frame,
+                         text="Select date range",
+                         font=ctk.CTkFont(size=13, weight="bold")).grid(row=0,
+                                                                        column=0,
+                                                                        columnspan=3,
+                                                                        pady=(
+                                                                        10, 10))
+            ctk.CTkLabel(date_frame, text="Start date").grid(row=1, column=0,
+                                                             sticky="w", padx=10)
+            ctk.CTkLabel(date_frame, text="(MM-DD-YYYY)").grid(row=2, column=0,
+                                                               sticky="w", padx=10)
+            self.temp_start_entry = ctk.CTkEntry(date_frame, width=180,
+                                            placeholder_text="01-01-2015")
+            self.temp_start_entry.insert(0, "01-01-2015")
+            self.temp_start_entry.grid(row=1, column=1, padx=10, rowspan=2, sticky="w")
+            ctk.CTkLabel(date_frame, text="End date").grid(row=3, column=0,
+                                                           sticky="w", padx=10,
+                                                           pady=(10, 0))
+            ctk.CTkLabel(date_frame, text="(MM-DD-YYYY)").grid(row=4, column=0,
+                                                               sticky="w", padx=10)
+            self.temp_end_entry = ctk.CTkEntry(date_frame, width=180,
+                                          placeholder_text="12-31-2023")
+            self.temp_end_entry.insert(0, "12-31-2023")
+            self.temp_end_entry.grid(row=3, column=1, padx=10, rowspan=2, sticky="w",
+                                pady=(10, 0))
+            ctk.CTkLabel(date_frame, text="Frequency").grid(row=5, column=0,
+                                                            sticky="w", padx=10,
+                                                            pady=(10, 0))
+            self.temp_freq_var = tk.StringVar(value="1h")
+            freq_options = ["1h", "30min", "15min", "1D", "1W", "1ME"]
+            self.freq_menu = ttk.Combobox(date_frame,
+                                          textvariable=self.temp_freq_var,
+                                          values=freq_options,
+                                          width=10)
+            self.freq_menu.grid(row=5, column=1, sticky="w", padx=10, pady=(10, 0))
+            ctk.CTkButton(date_frame,
+                          text="Add date range",
+                          command=self.add_date_range,
+                          fg_color=("gray75", "gray30"),
+                          text_color=("gray10", "gray90"),
+                          hover_color=("gray65", "gray40")
+                          ).grid(row=6, column=0, columnspan=2, pady=20)
+
+            # Select stations csv file button.
+            other_btns_frame = ctk.CTkFrame(self.temp_button_frame, fg_color=self.root.cget('fg_color'))
+            other_btns_frame.pack(expand=True, fill="both", pady=10, padx=(5, 20))
+            file_btn = ctk.CTkButton(other_btns_frame,
+                                     text="Select station file",
+                                     command=self.temperatures_file_button,
+                                     fg_color=("gray75", "gray30"),
+                                     text_color=("gray10", "gray90"),
+                                     hover_color=("gray65", "gray40"))
+            file_btn.pack(side='top', padx=3, pady=(50, 10))
+
+            # start download button.
+            start_fetching_btn = ctk.CTkButton(other_btns_frame,
+                                               text="Start",
+                                               command=self.temp_start_button,
+                                               fg_color=style["accent"],
+                                               hover_color=self.darken(style["accent"]),
+                                               font=("DM Sans", 13, "bold"))
+            start_fetching_btn.pack(side='top', padx=3, pady=5)
+
+    def auth_page(self):
+        self.indicate(self.auth_indicate)
+        # Frame for the whole page.
+        auth_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
+        auth_frame.pack(fill="both", expand=True)
+
+        # Page title.
+        title_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
+        title_frame.pack(pady=10)
+        label = ctk.CTkLabel(title_frame,
+                             text="Setup the authentication",
+                             font=("DM Sans", 14, "bold"))
+        label.pack()
+
+        # Frame to host the functionalities/info that can change on this page.
+        self.auth_status_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
+        self.auth_status_frame.pack(fill="both", expand=True)
+
+        # Check if netatmo_app.json exists and show the page based on that.
+        if not self.authentication.netatmo_json_exists():
+            # Two form fields to collect user info and a save button.
+            # You can find the credentials from here: https://dev.netatmo.com/apps/.
+            subtitle = ctk.CTkLabel(self.auth_status_frame, text="You can find the id and secret from https://dev.netatmo.com/apps/")
+            subtitle.pack(pady=(0, 10))
+            self.auth_id_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_id")
+            self.auth_secret_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_secret")
+            self.auth_id_entry.pack(pady=3)
+            self.auth_secret_entry.pack(pady=3)
+            save_btn = ctk.CTkButton(self.auth_status_frame, text="Save", command=self.auth_save_btn)
+            save_btn.pack(pady=10)
+        # Does .netatmo_token exist?
+        elif not self.authentication.token_file_exists():
+            label = ctk.CTkLabel(self.auth_status_frame, text=self.AUTH_CREATION_INFO)
+            label.pack()
+            link_btn = ctk.CTkButton(self.auth_status_frame, text="http://127.0.0.1:5000",
+                                     command=self.auth_link_btn)
+            link_btn.pack()
+        else:
+            label = ctk.CTkLabel(self.auth_status_frame, text="Authentication setup is OK")
+            label.pack()
+
+    def darken(self, hex_color, factor=0.85):
+        hex_color = hex_color.lstrip("#")
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
+
+    def temp_status_update(self, msg):
+        if self.temp_status_label is not None and self.temp_status_label.winfo_exists():
+            self.root.after(0, lambda: self.temp_status_label.configure(text=msg))
+
+    @staticmethod
+    def select_shapefile():
+        filetypes = (
+            ('Shapefiles', '*.shp'),
+            ('All files', '*.*')
+        )
+        filename = fd.askopenfilename(title='Select a shapefile',
+                                      initialdir='/',
+                                      filetypes=filetypes)
+        return filename
+
+    @staticmethod
+    def select_stations_file():
+        filetypes = (
+            ('csv', '*.csv'),
+            ('All files', '*.*')
+        )
+        filename = fd.askopenfilename(title='Select csv file',
+                                      initialdir='/',
+                                      filetypes=filetypes)
+        return filename
+
+    def hide_indicators(self):
+        self.stat_indicate.configure(fg_color=self.frame_colour)
+        self.temp_indicate.configure(fg_color=self.frame_colour)
+        self.auth_indicate.configure(fg_color=self.frame_colour)
+        pass
+
+    def indicate(self, lb):
+        self.hide_indicators()
+        lb.configure(fg_color='#158aff')
+        pass
+
+    @staticmethod
+    def clear_frame(frame):
+        print("Executing clear_frame().")
+        if frame is None:
+            return
+        for widgets in frame.winfo_children():
+            widgets.destroy()
+
+    def delete_pages(self):
+        for frame in self.main_frame.winfo_children():
+            frame.destroy()
+        self.temp_status_label = None
+
+    def change_page(self, page):
+        self.delete_pages()
+        page()
+
+    @staticmethod
+    def open_output_folder(folder):
         if not os.path.exists(folder):
             print("Output folder not found")
             return
@@ -367,152 +558,7 @@ class MyGUI:
         if exists:
             return True
         else:
-            False
-
-    def temperatures_page(self):
-        self.indicate(self.temp_indicate)
-        style = self.PAGE_STYLES["temperatures"]
-        # Frame for the whole page.
-        temperatures_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
-        temperatures_frame.pack(fill="both", expand=True)
-
-        # Thin accent strip along the top of the page.
-        top_strip = ctk.CTkFrame(temperatures_frame, fg_color=style["accent"], height=4)
-        top_strip.pack(side="top", fill="x")
-
-        # Button to open the output folder.
-        output_frame = ctk.CTkFrame(temperatures_frame,
-                                    fg_color=self.root.cget('fg_color'))
-        output_frame.pack(side="bottom", anchor="se", padx=5, pady=(0, 10)) # pady=(above, under)
-        output_folder_btn = ctk.CTkButton(output_frame,
-                                          text="Open output folder",
-                                          command=lambda: self.open_output_folder(self.temp_output_folder),
-                                          fg_color="transparent",
-                                          border_width=1,
-                                          border_color="#1f6aa5",
-                                          text_color=("#1f6aa5", "gray90"),
-                                          hover_color=("gray85", "gray25"),
-                                          width=160,
-                                          height=28,
-                                          font=("DM Sans", 12),
-                                          corner_radius=6)
-        output_folder_btn.pack(side="right", padx=5)
-
-        # Page title.
-        title_frame = ctk.CTkFrame(temperatures_frame, fg_color=self.root.cget('fg_color'))
-        title_frame.pack(pady=10)
-        label = ctk.CTkLabel(title_frame,
-                             text=style["title"],
-                             font=("DM Sans", 18, "bold"),
-                             text_color="#1A1A1A")
-        label.pack(pady=(10, 0))
-        subtitle = ctk.CTkLabel(title_frame,
-                                text=style["subtitle"],
-                                font=("DM Sans", 12),
-                                text_color="#555555")
-        subtitle.pack(pady=(0, 10))
-
-        # Program status info frame and header for it.
-        status_container = ctk.CTkFrame(temperatures_frame,
-                                        fg_color=self.root.cget('fg_color'))
-        status_container.pack(pady=5)
-        status_frame_desc = ctk.CTkLabel(
-            status_container,
-            text="Program status:",
-            font=ctk.CTkFont(size=11)
-        )
-        status_frame_desc.pack(anchor="w", padx=10, pady=(0, 0))
-        self.temp_status_frame = ctk.CTkFrame(status_container, border_width=1,
-                                         border_color=style["accent"], width=550, height=60)
-        self.temp_status_frame.pack(pady=(0, 0))
-        self.temp_status_frame.pack_propagate(False)
-
-        # Set temperature download status info.
-        self.temp_status_label = ctk.CTkLabel(self.temp_status_frame, text="Download temperatures")
-        self.temp_status_label.pack(expand=True)
-
-        # Buttons.
-        self.temp_button_frame = ctk.CTkFrame(temperatures_frame,
-                                              fg_color=self.root.cget('fg_color'))
-        self.temp_button_frame.pack(fill="both", expand=True, padx=(5, 15), pady=(0, 5))
-
-        # Is currently executing?
-        if self.temperatures.is_currently_executing():
-            self.temp_status_label.configure(text="Downloading in progress...")
-            # If there is a live download then we need to show the stop button view.
-            self.temp_stop_view()
-        elif self.temperatures.previous_execution_exists():
-            # If there is not a live download going on, but a previous process exists we shot the continue/reset view.
-            self.temp_status_label.configure(text="A previous download exists. Continue that download or reset it and start a new one?")
-            self.temp_continue_reset_view()
-        else:
-            date_frame = ctk.CTkFrame(self.temp_button_frame, fg_color=self.root.cget('fg_color'))
-            date_frame.columnconfigure(0, weight=1)
-            date_frame.columnconfigure(1, weight=1)
-            date_frame.pack(side='left', pady=10, padx=10)
-
-            ctk.CTkLabel(date_frame,
-                         text="Select date range",
-                         font=ctk.CTkFont(size=13, weight="bold")).grid(row=0,
-                                                                        column=0,
-                                                                        columnspan=3,
-                                                                        pady=(
-                                                                        10, 10))
-            ctk.CTkLabel(date_frame, text="Start date").grid(row=1, column=0,
-                                                             sticky="w", padx=10)
-            ctk.CTkLabel(date_frame, text="(MM-DD-YYYY)").grid(row=2, column=0,
-                                                               sticky="w", padx=10)
-            self.temp_start_entry = ctk.CTkEntry(date_frame, width=180,
-                                            placeholder_text="01-01-2015")
-            self.temp_start_entry.insert(0, "01-01-2015")
-            self.temp_start_entry.grid(row=1, column=1, padx=10, rowspan=2, sticky="w")
-            ctk.CTkLabel(date_frame, text="End date").grid(row=3, column=0,
-                                                           sticky="w", padx=10,
-                                                           pady=(10, 0))
-            ctk.CTkLabel(date_frame, text="(MM-DD-YYYY)").grid(row=4, column=0,
-                                                               sticky="w", padx=10)
-            self.temp_end_entry = ctk.CTkEntry(date_frame, width=180,
-                                          placeholder_text="12-31-2023")
-            self.temp_end_entry.insert(0, "12-31-2023")
-            self.temp_end_entry.grid(row=3, column=1, padx=10, rowspan=2, sticky="w",
-                                pady=(10, 0))
-            ctk.CTkLabel(date_frame, text="Frequency").grid(row=5, column=0,
-                                                            sticky="w", padx=10,
-                                                            pady=(10, 0))
-            self.temp_freq_var = tk.StringVar(value="1h")
-            freq_options = ["1h", "30min", "15min", "1D", "1W", "1ME"]
-            self.freq_menu = ttk.Combobox(date_frame,
-                                          textvariable=self.temp_freq_var,
-                                          values=freq_options,
-                                          width=10)
-            self.freq_menu.grid(row=5, column=1, sticky="w", padx=10, pady=(10, 0))
-            ctk.CTkButton(date_frame,
-                          text="Add date range",
-                          command=self.add_date_range,
-                          fg_color=("gray75", "gray30"),
-                          text_color=("gray10", "gray90"),
-                          hover_color=("gray65", "gray40")
-                          ).grid(row=6, column=0, columnspan=2, pady=20)
-
-            # Select stations csv file button.
-            other_btns_frame = ctk.CTkFrame(self.temp_button_frame, fg_color=self.root.cget('fg_color'))
-            other_btns_frame.pack(expand=True, fill="both", pady=10, padx=(5, 20))
-            file_btn = ctk.CTkButton(other_btns_frame,
-                                     text="Select station file",
-                                     command=self.temperatures_file_button,
-                                     fg_color=("gray75", "gray30"),
-                                     text_color=("gray10", "gray90"),
-                                     hover_color=("gray65", "gray40"))
-            file_btn.pack(side='top', padx=3, pady=(50, 10))
-
-            start_fetching_btn = ctk.CTkButton(other_btns_frame,
-                                               text="Start",
-                                               command=self.temp_start_button,
-                                               fg_color=style["accent"],
-                                               hover_color=self.darken(style["accent"]),
-                                               font=("DM Sans", 13, "bold"))
-            start_fetching_btn.pack(side='top', padx=3, pady=5)
-            # start download button.
+            return False
 
     def temp_stop_view(self):
         # Create stop button to the button frame.
@@ -566,8 +612,7 @@ class MyGUI:
         #self.temp_start_fetch()
 
     def temp_start_fetch(self):
-        message = self.temperatures.start_fetch()
-        self.temp_status_label.configure(text=message)
+        self.temperatures.start_fetch()
 
     def temp_stop_button(self):
         # Check if currently executing?
@@ -579,47 +624,6 @@ class MyGUI:
         self.temperatures.reset_checkpoint()
         self.clear_frame(self.temp_button_frame)
         self.change_page(self.temperatures_page)
-
-    def auth_page(self):
-        self.indicate(self.auth_indicate)
-        # Frame for the whole page.
-        auth_frame = ctk.CTkFrame(self.main_frame, fg_color=self.root.cget('fg_color'))
-        auth_frame.pack(fill="both", expand=True)
-
-        # Page title.
-        title_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
-        title_frame.pack(pady=10)
-        label = ctk.CTkLabel(title_frame,
-                             text="Setup the authentication",
-                             font=("DM Sans", 14, "bold"))
-        label.pack()
-
-        # Frame to host the functionalities/info that can change on this page.
-        self.auth_status_frame = ctk.CTkFrame(auth_frame, fg_color=self.root.cget('fg_color'))
-        self.auth_status_frame.pack(fill="both", expand=True)
-
-        # Check if netatmo_app.json exists and show the page based on that.
-        if not self.authentication.netatmo_json_exists():
-            # Two form fields to collect user info and a save button.
-            # You can find the credentials from here: https://dev.netatmo.com/apps/.
-            subtitle = ctk.CTkLabel(self.auth_status_frame, text="You can find the id and secret from https://dev.netatmo.com/apps/")
-            subtitle.pack(pady=(0, 10))
-            self.auth_id_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_id")
-            self.auth_secret_entry = ctk.CTkEntry(self.auth_status_frame, width=250, placeholder_text="client_secret")
-            self.auth_id_entry.pack(pady=3)
-            self.auth_secret_entry.pack(pady=3)
-            save_btn = ctk.CTkButton(self.auth_status_frame, text="Save", command=self.auth_save_btn)
-            save_btn.pack(pady=10)
-        # Does .netatmo_token exist?
-        elif not self.authentication.token_file_exists():
-            label = ctk.CTkLabel(self.auth_status_frame, text=self.AUTH_CREATION_INFO)
-            label.pack()
-            link_btn = ctk.CTkButton(self.auth_status_frame, text="http://127.0.0.1:5000",
-                                     command=self.auth_link_btn)
-            link_btn.pack()
-        else:
-            label = ctk.CTkLabel(self.auth_status_frame, text="Authentication setup is OK")
-            label.pack()
 
     def auth_save_btn(self):
         # Pass the form data to the authentication code to create the json with them.
@@ -643,7 +647,8 @@ class MyGUI:
             self.server_thread.start()
             print("Authentication application started.")
 
-    def auth_link_btn(self):
+    @staticmethod
+    def auth_link_btn():
         webbrowser.open("http://127.0.0.1:5000")
 
     def can_we_execute_auth(self):

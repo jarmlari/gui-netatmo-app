@@ -43,7 +43,7 @@ class Temperatures:
             f.close()
             if len(line1) == 0:
                 # This is the execution where a previous info doesn't exist?
-                print("New execution. Wtf and why are we here?")
+                print("New execution. Why are we here?")
                 self.previous_execution = False
                 # Should we call the reset function?
             else:
@@ -109,9 +109,9 @@ class Temperatures:
     def start_fetch(self):
         print("Temperatures start fetch.")
         if self.stationsfile_path == '':
-            return 'Please choose a csv file for the Netatmo stations.'
+            self.update_status('Please choose a csv file for the Netatmo stations.')
         elif self.date_range is None:
-            return 'Please set a date range.'
+            self.update_status('Please set a date range.')
         else:
             # Create an output folder with the current date and time in the name if this is a new execution?
             if not self.previous_execution_exists():
@@ -125,7 +125,7 @@ class Temperatures:
                 self.output_folder = f'output/temperatures/temperatures_output_{date}/'
             self.stop_event.clear()
             val = self.fetch_temp()
-            return val
+            self.update_status(val)
 
     def stop_fetch(self):
         self.previous_execution = True
@@ -284,7 +284,6 @@ class Temperatures:
                                     print("Going to sleep.")
                                     completed = self.wait_with_countdown(1000)
                                     if not completed:
-                                        self.update_status("Download stopped.")
                                         # Save progress if stop is called while sleeping.
                                         self.write_progress(yr, mon, dfNetatmo, y, x)
                                         return 'Downloading stopped'
@@ -324,3 +323,5 @@ class Temperatures:
                     self.output_filename = filename
                     month_file_exists = os.path.isfile(self.output_folder + filename)
                     dfNetatmo.to_csv(self.output_folder + filename, mode="a", header=not month_file_exists)
+
+        return "Download complete."
