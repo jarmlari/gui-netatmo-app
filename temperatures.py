@@ -172,8 +172,26 @@ class Temperatures:
             return (dt - epoch).total_seconds()
 
         counter = 0
+
+        '''
+        How the date_range object is:
+        DatetimeIndex(['2020-01-01 00:00:00', '2020-01-01 01:00:00',
+               '2020-01-01 02:00:00', '2020-01-01 03:00:00',
+               '2020-01-01 04:00:00', '2020-01-01 05:00:00',
+                ...
+               '2020-01-02 20:00:00', '2020-01-02 21:00:00',
+               '2020-01-02 22:00:00', '2020-01-02 23:00:00',
+               '2020-01-03 00:00:00'],
+              dtype='datetime64[us]', freq='h')
+        '''
         years = list(dict.fromkeys(self.date_range.year))
         months = list(dict.fromkeys(self.date_range.month))
+        '''
+        Years and months are normal arrays:
+        Years: [2015, 2016, 2017, 2018, 2019]
+        Months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        '''
+
 
         # Read from the checkpoint file where the last execution stopped (year, month, y and x).
         f = open(self.CHECKPOINT_FILE)
@@ -218,12 +236,22 @@ class Temperatures:
                 else:
                     follow_mon = mon + 1
                     follow_yr = yr
+
+
+                # startDate_dt: 2015-01-01 00:00:00+00:00
                 startDate_dt = datetime.datetime(yr, mon, 1, 0, 0, 0, 0,
                                                  tzinfo=datetime.timezone.utc)
+
+                # endDate_dt: 2015-02-01 00:00:00+00:00
                 endDate_dt = datetime.datetime(follow_yr, follow_mon, 1, 0, 0,
                                                0, 0,
                                                tzinfo=datetime.timezone.utc)
+
+                # startDate: 1420063200
+                # normal: 	Thu Jan 01 2015 00:00:00 GMT+0200 (Itä-Euroopan normaaliaika)
                 startDate = str(int(unix_time_millis(startDate_dt)))
+                # endDate: 1422741600
+                # normal: Sun Feb 01 2015 00:00:00 GMT+0200 (Itä-Euroopan normaaliaika)
                 endDate = str(int(unix_time_millis(endDate_dt)))
 
                 step = 200
@@ -252,6 +280,10 @@ class Temperatures:
                                 module_id = list_stations.iloc[x]["moduleID"]
                                 index = x
 
+                                '''
+                                date_begin,date_end (int, optional): UNIX-timestamp of first/last
+                                measure to receive. Limit is 1024 measures.
+                                '''
                                 response = client.Getmeasure(device_id=device_id,
                                                              module_id=module_id,
                                                              type=['Temperature'],
